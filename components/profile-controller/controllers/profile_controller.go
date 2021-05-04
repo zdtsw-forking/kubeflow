@@ -40,6 +40,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	// These are imports for creating the scc needed for sidecar and knative on OCP 4.7
+	securityv1 "github.com/openshift/api/security/v1"
+	securityclientv1 "github.com/openshift/client-go/security/clientset/versioned/typed/security/v1"
 )
 
 const AUTHZPOLICYISTIO = "ns-owner-access-istio"
@@ -128,9 +131,11 @@ func (r *ProfileReconciler) Reconcile(request ctrl.Request) (ctrl.Result, error)
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{"owner": instance.Spec.Owner.Name},
 			// inject istio sidecar to all pods in target namespace by default.
-			Labels: map[string]string{
-				istioInjectionLabel: "enabled",
-			},
+			//Labels: map[string]string{
+			//	istioInjectionLabel: "enabled",
+			//},
+            //Disabling istio injection for now, need to fix the istio sidecat injection of fsgrp 1377
+            Labels: map[string]string{},
 			Name: instance.Name,
 		},
 	}
@@ -188,6 +193,13 @@ func (r *ProfileReconciler) Reconcile(request ctrl.Request) (ctrl.Result, error)
 			return r.appendErrorConditionAndReturn(ctx, instance, fmt.Sprintf(
 				"namespace already exist, but not owned by profile creator %v", instance.Spec.Owner.Name))
 		}
+	}
+
+	// Add anyuid SCC for Openshift 
+	if err = r.createAnyUIDScc(ctx, instance); err != nil {
+		logger.Error(err, "error adding anyuid SCC", "namespace", instance.Name)
+		IncRequestErrorCounter("error adding anyuid SCC", SEVERITY_MAJOR)
+		return reconcile.Result{}, err
 	}
 
 	// Update Istio AuthorizationPolicy
@@ -368,6 +380,43 @@ func (r *ProfileReconciler) getAuthorizationPolicy(profileIns *profilev1.Profile
 		},
 	}
 }
+
+// createAnyUIDScc creates an SCC for anyuids
+func (r *ProfileReconciler) createAnyUIDScc(ctx context.Context, profileIns *profilev1.Profile) error {
+	logger := r.Log.WithValues("profile", profileIns.Name)
+	logger.Info("Creating anyuid SCC for profile", profileIns.Name)
+	//ctx := context.Background()
+	var priority int32 = 10
+	//actual, err := client.SecurityContextConstraints().Create(ctx, required, metav1.CreateOptions{})
+	scc := &securityv1.SecurityContextConstraints{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "istioanyuid",
+		},
+		Priority:                 &priority,
+		AllowPrivilegedContainer: false,
+		AllowHostNetwork:         false,
+		AllowHostPorts:           false,
+		//Volumes:                  ["*"],
+		SELinuxContext: securityv1.SELinuxContextStrategyOptions{
+			Type: securityv1.SELinuxStrategyRunAsAny,
+		},
+		RunAsUser: securityv1.RunAsUserStrategyOptions{
+			Type: securityv1.RunAsUserStrategyRunAsAny,
+		},
+		FSGroup: securityv1.FSGroupStrategyOptions{
+			Type: securityv1.FSGroupStrategyRunAsAny,
+		},
+		Users: []string{},
+		Groups: []string{},
+	}
+	securityInterface := securityclientv1.SecurityContextConstraintsGetter.SecurityContextConstraints()
+	actual, err := securityInterface.Create(ctx, scc, metav1.CreateOptions{})
+	
+	//actual, err := client.SecurityContextConstraints().Create(ctx, required, metav1.CreateOptions{})
+	//securityclientv1.SecurityContextConstraintsGetter
+	return nil
+}
+
 
 // updateIstioAuthorizationPolicy create or update Istio AuthorizationPolicy
 // resources in target namespace owned by "profileIns". The goal is to allow
