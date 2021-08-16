@@ -134,11 +134,12 @@ func (r *ProfileReconciler) Reconcile(request ctrl.Request) (ctrl.Result, error)
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{"owner": instance.Spec.Owner.Name},
 			// inject istio sidecar to all pods in target namespace by default.
-			Labels: map[string]string{
-				istioInjectionLabel: "enabled",
-			},
+			//Labels: map[string]string{
+			//	istioInjectionLabel: "enabled",
+			//},
             //Disabling istio injection for now, need to fix the istio sidecar injection of fsgrp 1377
-            //Labels: map[string]string{},
+			// This needs to be enabled when integrating with an authentication tool. 
+            Labels: map[string]string{},
 			Name: instance.Name,
 		},
 	}
@@ -431,7 +432,10 @@ func (r *ProfileReconciler) updateAnyUIDScc(ctx context.Context, profileIns *pro
 		FSGroup: securityv1.FSGroupStrategyOptions{
 			Type: securityv1.FSGroupStrategyRunAsAny,
 		},
-		Users: []string{"system:serviceaccount:"+profileIns.Name, "system:serviceaccount:"+profileIns.Name+":default-editor"},
+		//This needs to be removed, since sa default-editor is attached to notebooks and it fails to use volume when an scc is present
+		//Users: []string{"system:serviceaccount:"+profileIns.Name, "system:serviceaccount:"+profileIns.Name+":default-editor"},
+		// switched to default that is used by kfserving for serving pods
+		Users: []string{"system:serviceaccount:"+profileIns.Name, "system:serviceaccount:"+profileIns.Name+":default"},
 		Groups: []string{"system:cluster-admins"},
 	}
 	if err := controllerutil.SetControllerReference(profileIns, scc, r.Scheme); err != nil {
