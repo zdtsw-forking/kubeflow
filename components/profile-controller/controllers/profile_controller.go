@@ -465,17 +465,29 @@ func (r *ProfileReconciler) updateAnyUIDScc(ctx context.Context, profileIns *pro
 	 		logger.Info("Successfully Created SCC")
 		}
 	} else {
-		 logger.Info("SCC already exists" + "scc-"+profileIns.Name)
-		 logger.Info("scc found", "blabla", foundscc)
+		 logger.Info("SCC already exists " + "scc-"+profileIns.Name)
+		 logger.Info("scc found", "found", foundscc)
 		 // update SCC
-		 updatedscc, err5 := securityCLientset.SecurityContextConstraints().Update(ctx, foundscc, metav1.UpdateOptions{})
-		 if err5 != nil {
-			logger.Info("Error updating SCC ")
-			return err5
-		}
-		if updatedscc != nil {
-	 		logger.Info("Successfully Updated SCC")
-		}
+		 if !reflect.DeepEqual(foundscc, scc) {
+			 // Could not find an easier way to copy the data, we cannot blindly say foundscc=scc it has different metadata
+			foundscc.Priority = scc.Priority
+			foundscc.AllowPrivilegedContainer = scc.AllowPrivilegedContainer
+			foundscc.AllowHostNetwork = scc.AllowHostNetwork
+			foundscc.AllowHostPorts = scc.AllowHostPorts
+			foundscc.SELinuxContext = scc.SELinuxContext
+			foundscc.RunAsUser = scc.RunAsUser
+			foundscc.FSGroup = scc.FSGroup
+			foundscc.Users = scc.Users
+			foundscc.Groups = scc.Groups
+		    updatedscc, err5 := securityCLientset.SecurityContextConstraints().Update(ctx, foundscc, metav1.UpdateOptions{})
+		    if err5 != nil {
+			    logger.Info("Error updating SCC ")
+			     return err5
+		    }
+		    if updatedscc != nil {
+	 		    logger.Info("Successfully Updated SCC:", "updated", updatedscc)
+		    }
+		 }
 	} 
 	return nil
 }
@@ -526,13 +538,16 @@ func (r *ProfileReconciler) updateNetworkAttachmentDefinition(ctx context.Contex
 		 logger.Info(" NetworkAttachmentDefinition already exists" + "scc-"+profileIns.Name)
 		 logger.Info(" NetworkAttachmentDefinition found", "blabla", foundnet)
 		 // update SCC
-		 updatedscc, err5 := networkCLientset.NetworkAttachmentDefinitions(profileIns.Name).Update(ctx, foundnet, metav1.UpdateOptions{})
-		 if err5 != nil {
-			logger.Info("Error updating NetworkAttachmentDefinition")
-			return err5
-		}
-		if updatedscc != nil {
-	 		logger.Info("Successfully Updated NetworkAttachmentDefinition")
+		 if !reflect.DeepEqual(foundnet, net) {
+			 foundnet.Spec= net.Spec
+		 	updatedscc, err5 := networkCLientset.NetworkAttachmentDefinitions(profileIns.Name).Update(ctx, foundnet, metav1.UpdateOptions{})
+		 	if err5 != nil {
+				logger.Info("Error updating NetworkAttachmentDefinition")
+				return err5
+			}
+			if updatedscc != nil {
+	 			logger.Info("Successfully Updated NetworkAttachmentDefinition")
+			}
 		}
 	} 
 	return nil
