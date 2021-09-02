@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"reflect"
 	"time"
+	"encoding/json"
 
 	"github.com/ghodss/yaml"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -355,12 +356,12 @@ func (r *ProfileReconciler) appendErrorConditionAndReturn(ctx context.Context, i
 }
 
 func (r *ProfileReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := securityv1.AddToScheme(mgr.GetScheme()); err != nil {
-		return err
-	}
-	if err := networkattachv1.AddToScheme(mgr.GetScheme()); err != nil {
-		return err
-	}
+	//if err := securityv1.AddToScheme(mgr.GetScheme()); err != nil {
+	//	return err
+	//}
+	//if err := networkattachv1.AddToScheme(mgr.GetScheme()); err != nil {
+	//	return err
+	//}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&profilev1.Profile{}).
 		Owns(&corev1.Namespace{}).
@@ -411,10 +412,12 @@ func (r *ProfileReconciler) getAuthorizationPolicy(profileIns *profilev1.Profile
 func (r *ProfileReconciler) updateAnyUIDScc(ctx context.Context, profileIns *profilev1.Profile) error {
 	logger := r.Log.WithValues("profile", profileIns.Name)
 	logger.Info("Creating anyuid SCC for profile")
-	//ctx := context.Background()
 	var priority int32 = 10
-	//actual, err := client.SecurityContextConstraints().Create(ctx, required, metav1.CreateOptions{})
 	scc := &securityv1.SecurityContextConstraints{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "security.openshift.io/v1",
+			Kind:       "SecurityContextConstraints",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "scc-"+profileIns.Name,
 		},
@@ -456,7 +459,7 @@ func (r *ProfileReconciler) updateAnyUIDScc(ctx context.Context, profileIns *pro
 	foundscc, err3 := securityCLientset.SecurityContextConstraints().Get(ctx, "scc-"+profileIns.Name, metav1.GetOptions{})
 	if errors.IsNotFound(err3) {
 		// Create SCC
-		actual, err4 := securityCLientset.SecurityContextConstraints().Create(ctx, scc, metav1.CreateOptions{})
+		actual, err4 := securityCLientset.SecurityContextConstraints().Create(ctx, scc, metav1.CreateOptions{FieldManager:"profile-controller"})
 		if err4 != nil {
 			logger.Info("Error creating SCC ")
 			return err4
@@ -469,17 +472,12 @@ func (r *ProfileReconciler) updateAnyUIDScc(ctx context.Context, profileIns *pro
 		 logger.Info("scc found", "found", foundscc)
 		 // update SCC
 		 if !reflect.DeepEqual(foundscc, scc) {
-			 // Could not find an easier way to copy the data, we cannot blindly say foundscc=scc it has different metadata
-			foundscc.Priority = scc.Priority
-			foundscc.AllowPrivilegedContainer = scc.AllowPrivilegedContainer
-			foundscc.AllowHostNetwork = scc.AllowHostNetwork
-			foundscc.AllowHostPorts = scc.AllowHostPorts
-			foundscc.SELinuxContext = scc.SELinuxContext
-			foundscc.RunAsUser = scc.RunAsUser
-			foundscc.FSGroup = scc.FSGroup
-			foundscc.Users = scc.Users
-			foundscc.Groups = scc.Groups
-		    updatedscc, err5 := securityCLientset.SecurityContextConstraints().Update(ctx, foundscc, metav1.UpdateOptions{})
+			sccPatch, err := json.Marshal(scc)
+			if err != nil {
+				 return err
+			}
+			var forceApply = true
+			updatedscc, err5 := securityCLientset.SecurityContextConstraints().Patch(ctx, foundscc.Name, types.ApplyPatchType, sccPatch, metav1.PatchOptions{FieldManager: "profile-controller", Force: &forceApply})
 		    if err5 != nil {
 			    logger.Info("Error updating SCC ")
 			     return err5
@@ -536,10 +534,10 @@ func (r *ProfileReconciler) updateNetworkAttachmentDefinition(ctx context.Contex
 		}
 	} else {
 		 logger.Info(" NetworkAttachmentDefinition already exists" + "scc-"+profileIns.Name)
-		 logger.Info(" NetworkAttachmentDefinition found", "blabla", foundnet)
+		 logger.Info(" NetworkAttachmentDefinition found", "found", foundnet)
 		 // update SCC
 		 if !reflect.DeepEqual(foundnet, net) {
-			 foundnet.Spec= net.Spec
+			foundnet.Spec= net.Spec
 		 	updatedscc, err5 := networkCLientset.NetworkAttachmentDefinitions(profileIns.Name).Update(ctx, foundnet, metav1.UpdateOptions{})
 		 	if err5 != nil {
 				logger.Info("Error updating NetworkAttachmentDefinition")
