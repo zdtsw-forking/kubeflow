@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"reflect"
 	"time"
+	"encoding/json"
 
 	"github.com/ghodss/yaml"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -40,6 +41,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	// These are imports for creating the scc needed for istio sidecar and knative on OCP 4.7
+	securityv1 "github.com/openshift/api/security/v1"
+	securityclientv1 "github.com/openshift/client-go/security/clientset/versioned/typed/security/v1"
+	networkattachv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	networkattachclientv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
+	rest "k8s.io/client-go/rest"
 )
 
 const AUTHZPOLICYISTIO = "ns-owner-access-istio"
@@ -128,9 +135,12 @@ func (r *ProfileReconciler) Reconcile(request ctrl.Request) (ctrl.Result, error)
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{"owner": instance.Spec.Owner.Name},
 			// inject istio sidecar to all pods in target namespace by default.
-			Labels: map[string]string{
-				istioInjectionLabel: "enabled",
-			},
+			//Labels: map[string]string{
+			//	istioInjectionLabel: "enabled",
+			//},
+            //Disabling istio injection for now, need to fix the istio sidecar injection of fsgrp 1377
+			// This needs to be enabled when integrating with an authentication tool. 
+            Labels: map[string]string{},
 			Name: instance.Name,
 		},
 	}
@@ -188,6 +198,24 @@ func (r *ProfileReconciler) Reconcile(request ctrl.Request) (ctrl.Result, error)
 			return r.appendErrorConditionAndReturn(ctx, instance, fmt.Sprintf(
 				"namespace already exist, but not owned by profile creator %v", instance.Spec.Owner.Name))
 		}
+	}
+
+	// Update anyuid SCC for Openshift installation
+	// this allows any pod running in new profile namespaces to run as anyuid for user and group
+	// Ths is needed for both Istio side car and Knative in OCP 4.6/4.7
+	if err = r.updateAnyUIDScc(ctx, instance); err != nil {
+		logger.Error(err, "error updating anyuid SCC", "namespace", instance.Name)
+		IncRequestErrorCounter("error updating anyuid SCC", SEVERITY_MAJOR)
+		return reconcile.Result{}, err
+	}
+
+	// Update NetworkAttachmentDefinition
+	// this is needed for isito on OCP using istio-cni
+	// refer to documentation here: https://istio.io/latest/docs/setup/platform-setup/openshift/
+	if err = r.updateNetworkAttachmentDefinition(ctx, instance); err != nil {
+		logger.Error(err, "error updating NetworkAttachmentDefinition", "namespace", instance.Name)
+		IncRequestErrorCounter("error updating NetworkAttachmentDefinition", SEVERITY_MAJOR)
+		return reconcile.Result{}, err
 	}
 
 	// Update Istio AuthorizationPolicy
@@ -328,12 +356,20 @@ func (r *ProfileReconciler) appendErrorConditionAndReturn(ctx context.Context, i
 }
 
 func (r *ProfileReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	//if err := securityv1.AddToScheme(mgr.GetScheme()); err != nil {
+	//	return err
+	//}
+	//if err := networkattachv1.AddToScheme(mgr.GetScheme()); err != nil {
+	//	return err
+	//}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&profilev1.Profile{}).
 		Owns(&corev1.Namespace{}).
 		Owns(&istioSecurityClient.AuthorizationPolicy{}).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&rbacv1.RoleBinding{}).
+		Owns(&securityv1.SecurityContextConstraints{}).
+		Owns(&networkattachv1.NetworkAttachmentDefinition{}).
 		Complete(r)
 }
 
@@ -367,6 +403,152 @@ func (r *ProfileReconciler) getAuthorizationPolicy(profileIns *profilev1.Profile
 			},
 		},
 	}
+}
+
+
+// updateAnyUIDScc Update anyuid SCC for Openshift installation
+// this allows any pod running in new profile namespaces to run as anyuid for user and group
+// Ths is needed for both Istio side car and Knative in OCP 4.6/4.7
+func (r *ProfileReconciler) updateAnyUIDScc(ctx context.Context, profileIns *profilev1.Profile) error {
+	logger := r.Log.WithValues("profile", profileIns.Name)
+	logger.Info("Creating anyuid SCC for profile")
+	var priority int32 = 10
+	scc := &securityv1.SecurityContextConstraints{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "security.openshift.io/v1",
+			Kind:       "SecurityContextConstraints",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "scc-"+profileIns.Name,
+		},
+		Priority:                 &priority,
+		AllowPrivilegedContainer: true,
+		AllowHostNetwork:         false,
+		AllowHostPorts:           false,
+		//Volumes:                  ["*"],
+		SELinuxContext: securityv1.SELinuxContextStrategyOptions{
+			Type: securityv1.SELinuxStrategyMustRunAs,
+		},
+		RunAsUser: securityv1.RunAsUserStrategyOptions{
+			Type: securityv1.RunAsUserStrategyRunAsAny,
+		},
+		FSGroup: securityv1.FSGroupStrategyOptions{
+			Type: securityv1.FSGroupStrategyRunAsAny,
+		},
+		//This needs to be removed, since sa default-editor is attached to notebooks and it fails to use volume when an scc is present
+		//Users: []string{"system:serviceaccount:"+profileIns.Name, "system:serviceaccount:"+profileIns.Name+":default-editor"},
+		// switched to default that is used by kfserving for serving pods
+		Users: []string{"system:serviceaccount:"+profileIns.Name, "system:serviceaccount:"+profileIns.Name+":default"},
+		Groups: []string{"system:cluster-admins"},
+	}
+	if err := controllerutil.SetControllerReference(profileIns, scc, r.Scheme); err != nil {
+		return err
+	}
+
+	config, err1 := rest.InClusterConfig()
+	if err1 != nil{
+		logger.Info("Error getting config for K8 client")
+		return err1
+	}
+	securityCLientset, err2 := securityclientv1.NewForConfig(config)
+	if err2 != nil{
+		logger.Info("Error setting config for K8 client")
+		return err2
+	}
+	// Check if the scc already exists first
+	foundscc, err3 := securityCLientset.SecurityContextConstraints().Get(ctx, "scc-"+profileIns.Name, metav1.GetOptions{})
+	if errors.IsNotFound(err3) {
+		// Create SCC
+		actual, err4 := securityCLientset.SecurityContextConstraints().Create(ctx, scc, metav1.CreateOptions{FieldManager:"profile-controller"})
+		if err4 != nil {
+			logger.Info("Error creating SCC ")
+			return err4
+		}
+		if actual != nil {
+	 		logger.Info("Successfully Created SCC")
+		}
+	} else {
+		 logger.Info("SCC already exists " + "scc-"+profileIns.Name)
+		 logger.Info("scc found", "found", foundscc)
+		 // update SCC
+		 if !reflect.DeepEqual(foundscc, scc) {
+			sccPatch, err := json.Marshal(scc)
+			if err != nil {
+				 return err
+			}
+			var forceApply = true
+			updatedscc, err5 := securityCLientset.SecurityContextConstraints().Patch(ctx, foundscc.Name, types.ApplyPatchType, sccPatch, metav1.PatchOptions{FieldManager: "profile-controller", Force: &forceApply})
+		    if err5 != nil {
+			    logger.Info("Error updating SCC ")
+			     return err5
+		    }
+		    if updatedscc != nil {
+	 		    logger.Info("Successfully Updated SCC:", "updated", updatedscc)
+		    }
+		 }
+	} 
+	return nil
+}
+
+// Update NetworkAttachmentDefinition
+// this is needed for isito on OCP using istio-cni
+// refer to documentation here: https://istio.io/latest/docs/setup/platform-setup/openshift/
+func (r *ProfileReconciler) updateNetworkAttachmentDefinition(ctx context.Context, profileIns *profilev1.Profile) error {
+	logger := r.Log.WithValues("profile", profileIns.Name)
+	logger.Info("Updating NetworkAttachmentDefinition")
+	net := &networkattachv1.NetworkAttachmentDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "istio-cni",
+			Namespace: profileIns.Name,
+		},
+		//Spec: netv1.NetworkAttachmentDefinitionSpec{
+		//	Config: config,
+		//},
+	}
+	if err := controllerutil.SetControllerReference(profileIns, net, r.Scheme); err != nil {
+		return err
+	}
+
+	config, err1 := rest.InClusterConfig()
+	if err1 != nil{
+		logger.Info("Error getting config for K8 client")
+		return err1
+	}
+	//NewForConfig creates a new K8sCniCncfIoV1Client for the given config.
+	networkCLientset, err2 := networkattachclientv1.NewForConfig(config)
+	if err2 != nil{
+		logger.Info("Error setting config for K8 client")
+		return err2
+	}
+	// Check if the NetworkAttachmentDefinition already exists first
+	foundnet, err3 := networkCLientset.NetworkAttachmentDefinitions(profileIns.Name).Get(ctx, "istio-cni", metav1.GetOptions{})
+	if errors.IsNotFound(err3) {
+		// Create SCC
+		actual, err4 := networkCLientset.NetworkAttachmentDefinitions(profileIns.Name).Create(ctx, net, metav1.CreateOptions{})
+		if err4 != nil {
+			logger.Info("Error creating NetworkAttachmentDefinition ")
+			return err4
+		}
+		if actual != nil {
+	 		logger.Info("Successfully Created NetworkAttachmentDefinition")
+		}
+	} else {
+		 logger.Info(" NetworkAttachmentDefinition already exists" + "scc-"+profileIns.Name)
+		 logger.Info(" NetworkAttachmentDefinition found", "found", foundnet)
+		 // update SCC
+		 if !reflect.DeepEqual(foundnet, net) {
+			foundnet.Spec= net.Spec
+		 	updatedscc, err5 := networkCLientset.NetworkAttachmentDefinitions(profileIns.Name).Update(ctx, foundnet, metav1.UpdateOptions{})
+		 	if err5 != nil {
+				logger.Info("Error updating NetworkAttachmentDefinition")
+				return err5
+			}
+			if updatedscc != nil {
+	 			logger.Info("Successfully Updated NetworkAttachmentDefinition")
+			}
+		}
+	} 
+	return nil
 }
 
 // updateIstioAuthorizationPolicy create or update Istio AuthorizationPolicy

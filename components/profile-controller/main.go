@@ -22,6 +22,8 @@ import (
 	profilev1 "github.com/kubeflow/kubeflow/components/profile-controller/api/v1"
 	"github.com/kubeflow/kubeflow/components/profile-controller/controllers"
 	istioSecurityClient "istio.io/client-go/pkg/apis/security/v1beta1"
+        securityv1 "github.com/openshift/api/security/v1"
+        networkattachv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
@@ -44,6 +46,8 @@ func init() {
 
 	_ = profilev1.AddToScheme(scheme)
 	_ = istioSecurityClient.AddToScheme(scheme)
+        _ = securityv1.AddToScheme(scheme)
+        _ = networkattachv1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 

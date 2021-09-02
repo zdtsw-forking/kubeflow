@@ -49,6 +49,10 @@ require (
 	k8s.io/utils v0.0.0-20201015054608-420da100c033 // indirect
 	sigs.k8s.io/controller-runtime v0.6.3
 	sigs.k8s.io/structured-merge-diff/v4 v4.0.2 // indirect
+        // Needed for OCP scc
+        github.com/openshift/api v0.0.0-20200827090112-c05698d102cf
+	github.com/openshift/client-go v0.0.0-20200827190008-3062137373b5
+	github.com/openshift/library-go v0.0.0-20201013192036-5bd7c282e3e7
 )
 
 replace git.apache.org/thrift.git => github.com/apache/thrift v0.0.0-20180902110319-2566ecd5d999
