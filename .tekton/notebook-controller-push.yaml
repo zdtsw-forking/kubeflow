@@ -24,7 +24,7 @@ spec:
   - name: output-image
     value: quay.io/redhat-user-workloads/open-data-hub-tenant/opendatahub/notebook-controller:{{revision}}
   - name: path-context
-    value: components/odh-notebook-controller
+    value: .
   - name: revision
     value: '{{revision}}'
   pipelineSpec:
@@ -60,11 +60,11 @@ spec:
     - description: Fully Qualified Output Image
       name: output-image
       type: string
-    - default: .
+    - default: ./
       description: The path to your source code
       name: path-context
       type: string
-    - default: Dockerfile
+    - default: components/odh-notebook-controller/Dockerfile
       description: Path to the Dockerfile
       name: dockerfile
       type: string
