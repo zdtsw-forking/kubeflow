@@ -24,7 +24,7 @@ spec:
   - name: output-image
     value: quay.io/redhat-user-workloads/open-data-hub-tenant/opendatahub/odh-notebook-controller:{{revision}}
   - name: path-context
-    value: testing
+    value: .
   - name: revision
     value: '{{revision}}'
   pipelineSpec:
