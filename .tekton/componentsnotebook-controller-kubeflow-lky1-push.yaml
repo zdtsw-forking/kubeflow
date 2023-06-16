@@ -18,13 +18,13 @@ metadata:
 spec:
   params:
   - name: dockerfile
-    value: Dockerfile
+    value: components/notebook-controller/Dockerfile
   - name: git-url
     value: '{{repo_url}}'
   - name: output-image
     value: quay.io/redhat-user-workloads/open-data-hub-tenant/opendatahub/componentsnotebook-controller-kubeflow-lky1:{{revision}}
   - name: path-context
-    value: components/notebook-controller
+    value: ./
   - name: revision
     value: '{{revision}}'
   pipelineSpec:
@@ -64,7 +64,7 @@ spec:
       description: The path to your source code
       name: path-context
       type: string
-    - default: Dockerfile
+    - default: components/notebook-controller/Dockerfile
       description: Path to the Dockerfile
       name: dockerfile
       type: string
