@@ -64,7 +64,7 @@ spec:
       description: The path to your source code
       name: path-context
       type: string
-    - default: Dockerfile
+    - default: components/notebook-controller/Dockerfile
       description: Path to the Dockerfile
       name: dockerfile
       type: string
