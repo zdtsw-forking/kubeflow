@@ -18,13 +18,13 @@ metadata:
 spec:
   params:
   - name: dockerfile
-    value: https://raw.githubusercontent.com/devfile-samples/devfile-sample-go-basic/main/docker/Dockerfile
+    value: components/notebook-controller/Dockerfile
   - name: git-url
     value: '{{repo_url}}'
   - name: output-image
     value: quay.io/redhat-user-workloads/open-data-hub-tenant/opendatahub/notebook-controller:{{revision}}
   - name: path-context
-    value: components
+    value: .
   - name: revision
     value: '{{revision}}'
   pipelineSpec:
