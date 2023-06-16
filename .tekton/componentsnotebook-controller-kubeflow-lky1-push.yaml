@@ -24,7 +24,7 @@ spec:
   - name: output-image
     value: quay.io/redhat-user-workloads/open-data-hub-tenant/opendatahub/componentsnotebook-controller-kubeflow-lky1:{{revision}}
   - name: path-context
-    value: components/notebook-controller
+    value: .
   - name: revision
     value: '{{revision}}'
   pipelineSpec:
@@ -60,7 +60,7 @@ spec:
     - description: Fully Qualified Output Image
       name: output-image
       type: string
-    - default: components/notebook-controller
+    - default: .
       description: The path to your source code
       name: path-context
       type: string
